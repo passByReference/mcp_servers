@@ -11,18 +11,105 @@ Start the server
 Run the client
 `python client.py`
 
-## Expected Flow
-1. Client connects to /sse endpoint
-
-2. Server generates a client ID and returns the message endpoint via SSE
-
-3. Client receives the endpoint URL and sends a message to /message
-
-4. Server processes the message and sends responses back via SSE
-
-5. Client receives the responses in real-time
-
 ## Architecture Overview
+1. Components
+* Server: FastAPI application with two endpoints:
+  * `GET /sse`: Establishes an SSE connection
+  * `POST /message`: Receives client messages
+* Client: Connects to `/sse` and **listens** for real-time events while sending messages via `/message`.
+
+2. Communication Flow
+   1. Client connects to /sse
+      * The server generates a unique client_id using uuid.
+      * Creates an MCPServer instance and stores it in mcpHub (a dictionary).
+      * Sends back an SSE stream containing the client’s dedicated /message endpoint.
+   2. Client receives SSE events
+      * The client listens for messages like:
+        ```
+            event: endpoint
+            data: /message?client_id=1234-5678-90ab
+        ```
+      * It extracts the `client_id` and uses it to send messages.
+
+   3. Client sends messages via `/message`
+       * The client POSTs JSON-RPC-like requests:
+       ```
+           {
+           "jsonrpc": "2.0",
+           "method": "initialize",
+           "params": {}
+           }
+       ```
+       * The server processes the method (e.g., initialize, tools/list) and responds via SSE.
+
+   4. Server pushes responses via SSE
+       * The MCPServer class uses an `asyncio.Queue` to manage messages.
+
+       * When the client sends a request, the server enqueues a response, which is streamed back in real time.
+
+## Strengths of This Architecture
+✅ 1. Real-Time Updates (SSE)
+
+    Unlike HTTP polling, SSE allows the server to push updates instantly.
+
+    Works well for notifications, live logs, or progress tracking.
+
+✅ 2. Lightweight & HTTP-Based
+
+    Uses standard HTTP/HTTPS (no WebSocket complexity).
+
+    Works behind proxies and firewalls (unlike WebSockets).
+
+✅ 3. Scalable Client Handling
+
+    Each client gets a unique client_id and MCPServer instance.
+
+    The mcpHub dictionary allows tracking multiple clients.
+
+✅ 4. Asynchronous (FastAPI + asyncio)
+
+    Efficiently handles many concurrent connections.
+
+    Uses Python’s native async I/O for high performance.
+
+✅ 5. JSON-RPC-Like Structure
+
+    The method and params system makes it easy to extend functionality.
+
+    Works well for RPC (Remote Procedure Call) patterns.
+
+## Weaknesses & Limitations
+❌ 1. SSE Limitations
+
+    Unidirectional: Only server → client (client must use separate HTTP requests to send data).
+
+    No built-in reconnection: If the connection drops, the client must manually reconnect.
+
+    Browser limits: Some browsers restrict the number of SSE connections.
+
+❌ 2. No Persistence
+
+    If the server restarts, all client_ids and queues are lost.
+
+    No message history—clients must reinitialize.
+
+❌ 3. Scalability Bottlenecks
+
+    asyncio.Queue is in-memory → Not distributed.
+
+    If scaled horizontally (multiple servers), clients must reconnect to the right instance.
+
+❌ 4. No Authentication
+
+    Anyone with the client_id can send messages (no security checks).
+
+    No rate limiting or DDoS protection.
+
+❌ 5. Debugging Complexity
+
+    SSE streams can be hard to inspect (unlike REST APIs).
+
+    Errors in MCPServer.request() could silently fail.
 
 
 ## Q & A
